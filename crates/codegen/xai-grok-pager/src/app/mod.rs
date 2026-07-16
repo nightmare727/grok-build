@@ -46,8 +46,8 @@ mod turn_completion;
 mod xt_filter;
 pub(crate) use crate::terminal::kitty_flags_pushed;
 pub use cli::{
-    AgentArgs, AgentCmd, Command, HeadlessArgs, LeaderArgs, LeaderTargetArgs, OutputFormat,
-    PagerArgs, ServeArgs, WrapArgs,
+    AgentArgs, AgentCmd, Command, FeishuAccessCommand, FeishuArgs, FeishuCommand, HeadlessArgs,
+    LeaderArgs, LeaderTargetArgs, OutputFormat, PagerArgs, ServeArgs, WrapArgs,
 };
 pub use cli::{WorkspaceMgmtArgs, WorkspaceMgmtCommand, WorkspaceStartArgs};
 use crossterm::cursor::{self, SetCursorStyle};

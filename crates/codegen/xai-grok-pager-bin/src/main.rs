@@ -30,8 +30,8 @@ use std::env;
 use std::net::SocketAddr;
 use tokio_util::sync::CancellationToken;
 use xai_grok_pager::app::{
-    AgentCmd, Command, HeadlessArgs, LeaderTargetArgs, PagerArgs, join_early_prefetch,
-    resolve_use_leader,
+    AgentCmd, Command, FeishuAccessCommand, FeishuArgs, FeishuCommand, HeadlessArgs,
+    LeaderTargetArgs, PagerArgs, join_early_prefetch, resolve_use_leader,
 };
 use xai_grok_pager::app::{WorkspaceMgmtArgs, WorkspaceMgmtCommand, WorkspaceStartArgs};
 use xai_grok_pager::client_identity::PAGER_CLIENT_VERSION;
@@ -1290,6 +1290,161 @@ fn raise_fd_limit() {
 }
 #[cfg(not(target_os = "macos"))]
 fn raise_fd_limit() {}
+
+/// Resolve path to vendored `channels/feishu/bin/cli.mjs`.
+///
+/// Search order:
+/// 1. `$GROK_FEISHU_CHANNEL_DIR` (package root containing `bin/cli.mjs`)
+/// 2. Next to the running executable (`channels/feishu/bin/cli.mjs` or
+///    `../channels/feishu/bin/cli.mjs` for typical install layouts)
+/// 3. Workspace root relative to `CARGO_MANIFEST_DIR` (dev builds of pager-bin)
+fn resolve_feishu_cli_mjs() -> Result<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+
+    let candidates = |root: &Path| -> Vec<PathBuf> {
+        vec![
+            root.join("bin/cli.mjs"),
+            root.join("cli.mjs"),
+            root.join("channels/feishu/bin/cli.mjs"),
+            root.join("../channels/feishu/bin/cli.mjs"),
+        ]
+    };
+
+    if let Ok(dir) = env::var("GROK_FEISHU_CHANNEL_DIR") {
+        let root = PathBuf::from(dir);
+        for c in candidates(&root) {
+            if c.is_file() {
+                return Ok(c);
+            }
+        }
+        anyhow::bail!(
+            "GROK_FEISHU_CHANNEL_DIR={}: expected bin/cli.mjs under this directory",
+            root.display()
+        );
+    }
+
+    if let Ok(exe) = env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        for c in candidates(parent) {
+            if c.is_file() {
+                return Ok(c);
+            }
+        }
+        // Also try a few parents (e.g. target/debug → workspace root).
+        let mut walk = parent.to_path_buf();
+        for _ in 0..6 {
+            let c = walk.join("channels/feishu/bin/cli.mjs");
+            if c.is_file() {
+                return Ok(c);
+            }
+            if !walk.pop() {
+                break;
+            }
+        }
+    }
+
+    // Dev: pager-bin lives at crates/codegen/xai-grok-pager-bin.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut walk = manifest.clone();
+    for _ in 0..6 {
+        let c = walk.join("channels/feishu/bin/cli.mjs");
+        if c.is_file() {
+            return Ok(c);
+        }
+        if !walk.pop() {
+            break;
+        }
+    }
+
+    anyhow::bail!(
+        "could not find channels/feishu/bin/cli.mjs. Set GROK_FEISHU_CHANNEL_DIR to the \
+         feishu package directory (containing bin/cli.mjs), or run from a source checkout."
+    )
+}
+
+/// Ensure `node` is on PATH (Node ≥ 18 required by the Feishu package).
+fn ensure_node_available() -> Result<()> {
+    match std::process::Command::new("node").arg("-v").output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            anyhow::bail!(
+                "Node.js is required for the Feishu channel (`node -v` failed). \
+                 Install Node ≥ 18 and ensure `node` is on PATH. {stderr}"
+            )
+        }
+        Err(e) => anyhow::bail!(
+            "Node.js is required for the Feishu channel but `node` was not found on PATH ({e}). \
+             Install Node ≥ 18."
+        ),
+    }
+}
+
+/// Expand `~` / `~/...` using the process home directory.
+fn expand_feishu_state_dir(raw: &str) -> std::path::PathBuf {
+    xai_grok_shell::claude_import::expand_home(raw)
+}
+
+/// Resolve `FEISHU_STATE_DIR` from config `[channels.feishu].state_dir`, else default.
+fn resolve_feishu_state_dir() -> std::path::PathBuf {
+    const DEFAULT: &str = "~/.grok/channels/feishu";
+    let raw = xai_grok_shell::config::load_effective_config_disk_only()
+        .ok()
+        .and_then(|root| {
+            root.get("channels")?
+                .get("feishu")?
+                .get("state_dir")?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| DEFAULT.to_string());
+    expand_feishu_state_dir(&raw)
+}
+
+/// Dispatch `grok feishu …` to the vendored Node CLI (`channels/feishu/bin/cli.mjs`).
+fn run_feishu_command(args: FeishuArgs) -> Result<()> {
+    ensure_node_available()?;
+    let cli = resolve_feishu_cli_mjs()?;
+    let state_dir = resolve_feishu_state_dir();
+
+    let mut node_args: Vec<String> = vec![cli.display().to_string()];
+    match args.command {
+        FeishuCommand::Setup { clear } => {
+            node_args.push("setup".into());
+            if clear {
+                node_args.push("clear".into());
+            }
+        }
+        FeishuCommand::Access {
+            command: FeishuAccessCommand::Pair { code },
+        } => {
+            node_args.push("access".into());
+            node_args.push("pair".into());
+            node_args.push(code);
+        }
+        FeishuCommand::Serve => {
+            node_args.push("serve".into());
+        }
+    }
+
+    let status = std::process::Command::new("node")
+        .args(&node_args)
+        .env("FEISHU_STATE_DIR", &state_dir)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .map_err(|e| anyhow::anyhow!("failed to spawn node {}: {e}", cli.display()))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        let code = status.code().unwrap_or(1);
+        std::process::exit(code);
+    }
+}
+
 /// Single audit point for the `Command::Dashboard` soft-subcommand.
 /// Sets `GROK_OPEN_DASHBOARD_AT_STARTUP=1` if the user asked for
 /// `grok dashboard`, and clears `args.command` so the regular
@@ -1771,6 +1926,9 @@ async fn async_main() -> Result<()> {
             Command::Dashboard => {
                 args.command = Some(Command::Dashboard);
                 flag_dashboard_at_startup_if_requested(&mut args)?;
+            }
+            Command::Feishu(feishu_args) => {
+                return run_feishu_command(feishu_args);
             }
         }
     }
@@ -2888,6 +3046,92 @@ mod tests {
             out,
             Err("boom".to_string()),
             "Err output must pass through unchanged",
+        );
+    }
+
+    #[test]
+    fn channels_flag_parses_single_and_comma_separated() {
+        let args = PagerArgs::try_parse_from(["grok", "--channels", "feishu"]).unwrap();
+        assert_eq!(args.channels, vec!["feishu".to_string()]);
+        assert!(!args.no_channels);
+
+        let args = PagerArgs::try_parse_from(["grok", "--channels", "feishu,other"]).unwrap();
+        assert_eq!(
+            args.channels,
+            vec!["feishu".to_string(), "other".to_string()]
+        );
+    }
+
+    #[test]
+    fn no_channels_flag_parses() {
+        let args = PagerArgs::try_parse_from(["grok", "--no-channels"]).unwrap();
+        assert!(args.no_channels);
+        assert!(args.channels.is_empty());
+    }
+
+    #[test]
+    fn feishu_subcommands_parse() {
+        use xai_grok_pager::app::{FeishuAccessCommand, FeishuArgs, FeishuCommand};
+
+        let args = PagerArgs::try_parse_from(["grok", "feishu", "setup"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Setup { clear: false },
+            }))
+        ));
+
+        let args = PagerArgs::try_parse_from(["grok", "feishu", "setup", "--clear"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Setup { clear: true },
+            }))
+        ));
+
+        let args =
+            PagerArgs::try_parse_from(["grok", "feishu", "access", "pair", "123456"]).unwrap();
+        match args.command {
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Access {
+                    command: FeishuAccessCommand::Pair { code },
+                },
+            })) => assert_eq!(code, "123456"),
+            other => panic!("expected feishu access pair, got {other:?}"),
+        }
+
+        let args = PagerArgs::try_parse_from(["grok", "feishu", "serve"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Serve,
+            }))
+        ));
+    }
+
+    #[test]
+    fn resolve_feishu_cli_mjs_finds_vendored_path() {
+        let path = resolve_feishu_cli_mjs().expect("dev checkout should find vendored cli.mjs");
+        assert!(
+            path.ends_with("channels/feishu/bin/cli.mjs"),
+            "unexpected path: {}",
+            path.display()
+        );
+        assert!(path.is_file(), "cli.mjs must exist at {}", path.display());
+    }
+
+    #[test]
+    fn expand_feishu_state_dir_tilde() {
+        let expanded = expand_feishu_state_dir("~/.grok/channels/feishu");
+        assert!(
+            !expanded.to_string_lossy().starts_with('~'),
+            "tilde should expand: {}",
+            expanded.display()
+        );
+        assert!(
+            expanded.ends_with("channels/feishu") || expanded.ends_with("channels\\feishu"),
+            "unexpected: {}",
+            expanded.display()
         );
     }
 }

@@ -136,6 +136,40 @@ See ~/.grok/README.md for more information.
     /// `~/.grok/config.toml` or when the `GROK_AGENT_DASHBOARD=0` env
     /// var is set.
     Dashboard,
+    /// Manage Feishu (Lark) channel: setup, pairing, serve MCP
+    Feishu(FeishuArgs),
+}
+/// Arguments for the `feishu` subcommand.
+#[derive(Debug, clap::Args, Clone)]
+pub struct FeishuArgs {
+    #[command(subcommand)]
+    pub command: FeishuCommand,
+}
+/// Feishu channel management subcommands.
+#[derive(Debug, Subcommand, Clone)]
+pub enum FeishuCommand {
+    /// Interactive App ID / Secret setup (writes ~/.grok/channels/feishu)
+    Setup {
+        /// Clear stored credentials
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Pairing / access management
+    Access {
+        #[command(subcommand)]
+        command: FeishuAccessCommand,
+    },
+    /// Run the Feishu MCP server on stdio (debug / manual)
+    Serve,
+}
+/// Feishu access / pairing subcommands.
+#[derive(Debug, Subcommand, Clone)]
+pub enum FeishuAccessCommand {
+    /// Confirm a pairing code from Feishu
+    Pair {
+        /// Pairing code shown in Feishu
+        code: String,
+    },
 }
 /// Arguments for the `wrap` subcommand: the command to run, then its args.
 #[derive(Debug, clap::Args, Clone)]
@@ -720,6 +754,16 @@ pub struct PagerArgs {
         "prompt_file"]
     )]
     pub prompt: Option<String>,
+    /// Enable session channels (e.g. `feishu`). Can be repeated or comma-separated.
+    ///
+    /// Session startup reads this together with config via
+    /// `xai_grok_channels::resolve_effective_channels` (Task 6). Present-but-empty
+    /// forces channels off for the session; omit the flag to use config defaults.
+    #[arg(long = "channels", value_name = "NAME", value_delimiter = ',', global = true)]
+    pub channels: Vec<String>,
+    /// Disable all channels for this session (overrides config).
+    #[arg(long = "no-channels", global = true, action = ArgAction::SetTrue)]
+    pub no_channels: bool,
     /// Subcommand (e.g., `agent`).
     #[command(subcommand, next_display_order = 0)]
     pub command: Option<Command>,
@@ -1176,5 +1220,97 @@ mod tests {
             panic!("expected agent subcommand");
         };
         assert_eq!(agent.reasoning_effort.as_deref(), Some("max"));
+    }
+    #[test]
+    fn channels_flag_parses_single_and_comma_separated() {
+        let args = PagerArgs::try_parse_from(["grok", "--channels", "feishu"]).unwrap();
+        assert_eq!(args.channels, vec!["feishu".to_string()]);
+        assert!(!args.no_channels);
+
+        let args =
+            PagerArgs::try_parse_from(["grok", "--channels", "feishu,other"]).unwrap();
+        assert_eq!(
+            args.channels,
+            vec!["feishu".to_string(), "other".to_string()]
+        );
+
+        let args = PagerArgs::try_parse_from([
+            "grok",
+            "--channels",
+            "feishu",
+            "--channels",
+            "other",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.channels,
+            vec!["feishu".to_string(), "other".to_string()]
+        );
+    }
+    #[test]
+    fn no_channels_flag_parses() {
+        let args = PagerArgs::try_parse_from(["grok", "--no-channels"]).unwrap();
+        assert!(args.no_channels);
+        assert!(args.channels.is_empty());
+    }
+    #[test]
+    fn channels_flags_are_global_with_subcommands() {
+        let args = PagerArgs::try_parse_from([
+            "grok",
+            "agent",
+            "stdio",
+            "--channels",
+            "feishu",
+            "--no-channels",
+        ])
+        .unwrap();
+        assert_eq!(args.channels, vec!["feishu".to_string()]);
+        assert!(args.no_channels);
+        assert!(matches!(args.command, Some(Command::Agent(_))));
+    }
+    #[test]
+    fn feishu_setup_parses() {
+        let args = PagerArgs::try_parse_from(["grok", "feishu", "setup"]).unwrap();
+        match args.command {
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Setup { clear: false },
+            })) => {}
+            other => panic!("expected feishu setup, got {other:?}"),
+        }
+    }
+    #[test]
+    fn feishu_setup_clear_parses() {
+        let args =
+            PagerArgs::try_parse_from(["grok", "feishu", "setup", "--clear"]).unwrap();
+        match args.command {
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Setup { clear: true },
+            })) => {}
+            other => panic!("expected feishu setup --clear, got {other:?}"),
+        }
+    }
+    #[test]
+    fn feishu_access_pair_parses() {
+        let args =
+            PagerArgs::try_parse_from(["grok", "feishu", "access", "pair", "123456"])
+                .unwrap();
+        match args.command {
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Access {
+                    command: FeishuAccessCommand::Pair { code },
+                },
+            })) => assert_eq!(code, "123456"),
+            other => panic!("expected feishu access pair, got {other:?}"),
+        }
+    }
+    #[test]
+    fn feishu_serve_parses() {
+        let args = PagerArgs::try_parse_from(["grok", "feishu", "serve"]).unwrap();
+        match args.command {
+            Some(Command::Feishu(FeishuArgs {
+                command: FeishuCommand::Serve,
+            })) => {}
+            other => panic!("expected feishu serve, got {other:?}"),
+        }
     }
 }
