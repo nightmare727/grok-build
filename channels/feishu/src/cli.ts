@@ -138,5 +138,6 @@ export async function handleFeishuCli(
       return
     default:
       printUsage()
+      process.exit(subcommand ? 1 : 0)
   }
 }
