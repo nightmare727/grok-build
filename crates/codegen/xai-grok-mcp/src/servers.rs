@@ -17,7 +17,7 @@ use tokio::{
 use rmcp::{
     ClientHandler, ServiceExt,
     model::{
-        CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation,
+        CallToolRequestParams, ClientCapabilities, ClientInfo, CustomNotification, Implementation,
         PaginatedRequestParams,
     },
     service::{
@@ -2338,6 +2338,16 @@ pub enum McpClientEvent {
     /// dispatched analogue of [`Self::ConfigAdded`] for the removed
     /// set of a [`Self::ConfigDiff`].
     ConfigRemoved { server: McpServerName },
+    /// Server pushed a custom (non-standard) JSON-RPC notification
+    /// (rmcp [`CustomNotification`]). Used by channel MCP servers
+    /// (e.g. Feishu) for `notifications/claude/channel*` wire methods.
+    /// `params` is `serde_json::Value::Null` when the wire notification
+    /// omitted params.
+    CustomNotification {
+        server: McpServerName,
+        method: String,
+        params: serde_json::Value,
+    },
 }
 
 /// Discriminant for [`McpClientEvent`], used as the second half of the
@@ -2357,6 +2367,7 @@ pub enum McpClientEventKind {
     Ready,
     ConfigAdded,
     ConfigRemoved,
+    CustomNotification,
 }
 
 impl McpClientEvent {
@@ -2374,7 +2385,8 @@ impl McpClientEvent {
             | Self::ResourcesChanged { server }
             | Self::Ready { server }
             | Self::ConfigAdded { server }
-            | Self::ConfigRemoved { server } => Some(server.as_str()),
+            | Self::ConfigRemoved { server }
+            | Self::CustomNotification { server, .. } => Some(server.as_str()),
             Self::ConfigDiff { .. } => None,
         }
     }
@@ -4327,12 +4339,13 @@ impl McpClient {
 ///
 /// ## Notification routing
 ///
-/// `on_tool_list_changed` / `on_resource_list_changed` push an
-/// [`McpClientEvent`] into [`Self::notify_tx`]. If the receiver has
-/// been dropped (subagent teardown, session shutdown, or the field
-/// was `None` to begin with — see [`McpClient::notify_tx`] doc), the
-/// send fails silently; rmcp must not see an error from a
-/// notification handler or the service loop tears down.
+/// `on_tool_list_changed` / `on_resource_list_changed` /
+/// `on_custom_notification` push an [`McpClientEvent`] into
+/// [`Self::notify_tx`]. If the receiver has been dropped (subagent
+/// teardown, session shutdown, or the field was `None` to begin with —
+/// see [`McpClient::notify_tx`] doc), the send fails silently; rmcp
+/// must not see an error from a notification handler or the service
+/// loop tears down.
 #[derive(Debug)]
 pub struct GrokClientHandler {
     /// Static `ClientInfo` returned by [`Self::get_info`]; built once
@@ -4381,6 +4394,18 @@ impl ClientHandler for GrokClientHandler {
     async fn on_resource_list_changed(&self, _context: NotificationContext<RoleClient>) {
         self.emit(McpClientEvent::ResourcesChanged {
             server: self.server_name.clone(),
+        });
+    }
+
+    async fn on_custom_notification(
+        &self,
+        notification: CustomNotification,
+        _context: NotificationContext<RoleClient>,
+    ) {
+        self.emit(McpClientEvent::CustomNotification {
+            server: self.server_name.clone(),
+            method: notification.method,
+            params: notification.params.unwrap_or(serde_json::Value::Null),
         });
     }
 
@@ -7437,6 +7462,40 @@ mod tests {
         match ev {
             McpClientEvent::ToolsChanged { server } => assert_eq!(server, "test"),
             other => panic!("expected ToolsChanged, got {other:?}"),
+        }
+    }
+
+    /// Contract: custom server notifications (channel wire methods, etc.)
+    /// fan out with method + params preserved. Mirrors
+    /// `client_handler_routes_tools_changed` — exercised via `emit`
+    /// because `NotificationContext` is non-trivial to construct
+    /// outside a live rmcp service loop.
+    #[tokio::test]
+    async fn client_handler_routes_custom_notification() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<McpClientEvent>();
+        let handler = GrokClientHandler {
+            info: McpClient::make_client_info("test"),
+            server_name: "test".to_string(),
+            notify_tx: Arc::new(parking_lot::Mutex::new(Some(tx))),
+        };
+        let params = serde_json::json!({"text": "hello from channel", "channel_id": "c1"});
+        handler.emit(McpClientEvent::CustomNotification {
+            server: handler.server_name.clone(),
+            method: "notifications/claude/channel".to_string(),
+            params: params.clone(),
+        });
+        let ev = rx.recv().await.expect("event arrived");
+        match ev {
+            McpClientEvent::CustomNotification {
+                server,
+                method,
+                params: got_params,
+            } => {
+                assert_eq!(server, "test");
+                assert_eq!(method, "notifications/claude/channel");
+                assert_eq!(got_params, params);
+            }
+            other => panic!("expected CustomNotification, got {other:?}"),
         }
     }
 

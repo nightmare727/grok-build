@@ -365,6 +365,7 @@ fn kind_of(ev: &McpClientEvent) -> McpClientEventKind {
         McpClientEvent::Ready { .. } => McpClientEventKind::Ready,
         McpClientEvent::ConfigAdded { .. } => McpClientEventKind::ConfigAdded,
         McpClientEvent::ConfigRemoved { .. } => McpClientEventKind::ConfigRemoved,
+        McpClientEvent::CustomNotification { .. } => McpClientEventKind::CustomNotification,
         McpClientEvent::ConfigDiff { .. } => {
             unreachable!(
                 "ConfigDiff is fanned out into ConfigAdded/ConfigRemoved by insert_event before kind_of is called"
@@ -450,6 +451,15 @@ pub fn build_payload(
             McpServerStatusReason::ConfigRemoved,
             None,
         ),
+        // Custom notifications are drained in `flush_window` (log +
+        // skip server_status) and must not reach build_payload.
+        // Kept exhaustive so a future caller that forgets the filter
+        // fails loudly rather than silently mis-mapping wire status.
+        (McpClientEventKind::CustomNotification, _) => {
+            unreachable!(
+                "CustomNotification is drained in flush_window and must not reach build_payload"
+            )
+        }
     };
 
     McpServerStatusPayload {
@@ -486,6 +496,24 @@ pub fn flush_window(
     let mut shutdown_guard = shutdown.lock().unwrap_or_else(|e| e.into_inner());
     for (key, event) in buf {
         let (server, kind) = &key;
+        // Channel / custom MCP notifications are not server-status
+        // events. No channel subscriber is wired yet (Task 7 inject);
+        // log and drop so the kind match stays exhaustive without
+        // inventing a fake status payload.
+        if let McpClientEvent::CustomNotification {
+            server,
+            method,
+            params,
+        } = &event
+        {
+            tracing::debug!(
+                %server,
+                %method,
+                %params,
+                "MCP custom notification received; no channel subscriber yet"
+            );
+            continue;
+        }
         // ONLY `ConfigRemoved` marks `shutting_down`.
         //
         // Pre-fix, `TransportClosed` also marked the set, but
