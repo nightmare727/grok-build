@@ -127,6 +127,14 @@ pub fn merge_managed_mcp_servers_with_policy(
     let mut merged: Vec<acp::McpServer> = servers.into_values().collect();
     inject_managed_headers(&mut merged, managed_configs);
     auto_inject_managed_servers_with_disabled(&mut merged, managed_configs, &disabled);
+    // Channel adapters (Feishu, …): inject when effective channels allowlist
+    // includes them (config + GROK_CHANNELS / GROK_NO_CHANNELS). Failures log
+    // and do not block other MCP servers.
+    let channels_cfg = crate::config::load_effective_config_disk_only()
+        .ok()
+        .map(|root| crate::util::config::load_config_from_toml(&root).channels)
+        .unwrap_or_default();
+    crate::session::channel_feishu::inject_feishu_channel_server(&mut merged, &channels_cfg);
     // Deterministic order: this list is collected from a HashMap (random
     // iteration order). Downstream equality checks (`mcp_servers_equal`, used
     // by both `update_configs` and the `update_configs_diff` short-circuit) are

@@ -1685,6 +1685,17 @@ fn main() {
 async fn async_main() -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let mut args = PagerArgs::parse_and_apply_cwd()?;
+    // Channel session enablement (Task 6): surface CLI flags as env so the
+    // shell MCP merge path can inject Feishu without plumbing args through
+    // every agent config layer. Precedence lives in
+    // `xai_grok_channels::resolve_effective_channels`.
+    if args.no_channels {
+        unsafe { std::env::set_var("GROK_NO_CHANNELS", "1") };
+    } else if !args.channels.is_empty() {
+        unsafe {
+            std::env::set_var("GROK_CHANNELS", args.channels.join(","));
+        }
+    }
     if let Some(ref mode) = args.compaction_mode {
         unsafe { std::env::set_var("GROK_COMPACTION_MODE", mode) };
     }
