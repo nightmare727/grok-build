@@ -45,6 +45,10 @@ pub struct Config {
     /// the settings modal writes; the rest of `[toolset]` never round-trips
     /// (it carries runtime-only structs whose defaults must not hit disk).
     pub ask_user_question: crate::tools::config::AskUserQuestionToolConfig,
+    /// `[channels]` section — default channel enablement and per-channel settings.
+    /// Effective session allowlist is resolved via
+    /// [`xai_grok_channels::resolve_effective_channels`] (CLI can override).
+    pub channels: xai_grok_channels::ChannelsConfig,
 }
 
 pub fn get_mcp_server_config(name: &str) -> Option<McpServerConfig> {

@@ -13048,6 +13048,10 @@ dependencies = [
 [[package]]
 name = "xai-grok-channels"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "xai-grok-compaction"
@@ -13723,6 +13727,7 @@ dependencies = [
  "xai-grok-agent",
  "xai-grok-announcements",
  "xai-grok-auth",
+ "xai-grok-channels",
  "xai-grok-compaction",
  "xai-grok-config",
  "xai-grok-config-types",
