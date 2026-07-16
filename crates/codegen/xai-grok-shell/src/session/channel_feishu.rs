@@ -17,6 +17,30 @@ use xai_grok_channels::{
 /// Canonical MCP server name for the Feishu channel adapter.
 pub const FEISHU_MCP_SERVER_NAME: &str = "feishu";
 
+/// Last active chat for channel permission / assistant_delta routing.
+#[derive(Debug, Clone, Default)]
+pub struct ActiveChannelChat {
+    pub server: String,
+    pub chat_id: String,
+}
+
+static ACTIVE_CHAT: std::sync::Mutex<Option<ActiveChannelChat>> = std::sync::Mutex::new(None);
+
+/// Record the most recent channel chat context (from inbound message meta).
+pub fn note_active_chat(server: &str, chat_id: &str) {
+    if let Ok(mut guard) = ACTIVE_CHAT.lock() {
+        *guard = Some(ActiveChannelChat {
+            server: server.to_string(),
+            chat_id: chat_id.to_string(),
+        });
+    }
+}
+
+/// Snapshot of the last active channel chat, if any.
+pub fn active_chat() -> Option<ActiveChannelChat> {
+    ACTIVE_CHAT.lock().ok().and_then(|g| g.clone())
+}
+
 /// Env: force channels off for this process (CLI `--no-channels`).
 pub const ENV_NO_CHANNELS: &str = "GROK_NO_CHANNELS";
 /// Env: comma-separated channel list (CLI `--channels`).

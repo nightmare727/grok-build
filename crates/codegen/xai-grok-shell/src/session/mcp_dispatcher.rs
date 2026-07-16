@@ -487,6 +487,7 @@ pub fn flush_window(
     buf: HashMap<(McpServerName, McpClientEventKind), McpClientEvent>,
     shutdown: &SharedShutdownState,
     gateway: &xai_acp_lib::AcpAgentGatewaySender,
+    session_cmd_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::session::SessionCommand>>,
 ) {
     // Recover from poisoning rather than cascade-panicking: `flush_window`
     // now does non-trivial work under this lock, and a single panic while
@@ -496,22 +497,16 @@ pub fn flush_window(
     let mut shutdown_guard = shutdown.lock().unwrap_or_else(|e| e.into_inner());
     for (key, event) in buf {
         let (server, kind) = &key;
-        // Channel / custom MCP notifications are not server-status
-        // events. No channel subscriber is wired yet (Task 7 inject);
-        // log and drop so the kind match stays exhaustive without
-        // inventing a fake status payload.
+        // Channel / custom MCP notifications are not server-status events.
+        // Route inbound channel messages into the session prompt queue when
+        // a SessionCommand sender is available; otherwise log and drop.
         if let McpClientEvent::CustomNotification {
             server,
             method,
             params,
         } = &event
         {
-            tracing::debug!(
-                %server,
-                %method,
-                %params,
-                "MCP custom notification received; no channel subscriber yet"
-            );
+            handle_custom_notification(server, method, params, session_cmd_tx);
             continue;
         }
         // ONLY `ConfigRemoved` marks `shutting_down`.
@@ -548,6 +543,106 @@ pub fn flush_window(
         };
         gateway
             .forward_fire_and_forget(acp::ExtNotification::new(SERVER_STATUS_METHOD, raw.into()));
+    }
+}
+
+/// Handle a custom MCP notification. Channel inbound messages become session prompts.
+fn handle_custom_notification(
+    server: &str,
+    method: &str,
+    params: &serde_json::Value,
+    session_cmd_tx: Option<&tokio::sync::mpsc::UnboundedSender<crate::session::SessionCommand>>,
+) {
+    use xai_grok_channels::{CHANNEL_NOTIFICATION, CHANNEL_PERMISSION, wrap_channel_message};
+
+    if method == CHANNEL_PERMISSION {
+        // Permission replies are Task 9; log for now.
+        tracing::debug!(%server, %params, "channel permission notification (not yet wired)");
+        return;
+    }
+
+    if method != CHANNEL_NOTIFICATION {
+        tracing::debug!(%server, %method, %params, "MCP custom notification ignored");
+        return;
+    }
+
+    let Some(cmd_tx) = session_cmd_tx else {
+        tracing::debug!(
+            %server,
+            %method,
+            "channel notification received but no session command channel"
+        );
+        return;
+    };
+
+    let content = params
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if content.trim().is_empty() {
+        tracing::debug!(%server, "channel notification with empty content");
+        return;
+    }
+
+    let mut meta: Vec<(String, String)> = Vec::new();
+    if let Some(obj) = params.get("meta").and_then(|m| m.as_object()) {
+        for (k, v) in obj {
+            if let Some(s) = v.as_str() {
+                meta.push((k.clone(), s.to_string()));
+            } else if !v.is_null() {
+                meta.push((k.clone(), v.to_string()));
+            }
+        }
+    }
+    // Also accept top-level chat_id etc. for robustness.
+    for key in ["chat_id", "sender_id", "message_id"] {
+        if meta.iter().any(|(k, _)| k == key) {
+            continue;
+        }
+        if let Some(s) = params.get(key).and_then(|v| v.as_str()) {
+            meta.push((key.to_string(), s.to_string()));
+        }
+    }
+
+    // Remember last chat context for permission/delta routing (Tasks 8–9).
+    if let Some((_, chat_id)) = meta.iter().find(|(k, _)| k == "chat_id") {
+        crate::session::channel_feishu::note_active_chat(server, chat_id);
+    }
+
+    let meta_refs: Vec<(&str, &str)> = meta
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let wrapped = wrap_channel_message(server, &content, &meta_refs);
+    let prompt_id = format!(
+        "channel-{}-{}",
+        server,
+        uuid::Uuid::new_v4()
+    );
+    let prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(wrapped))];
+    let (respond_to, _completion_rx) = tokio::sync::oneshot::channel();
+    match cmd_tx.send(crate::session::SessionCommand::Prompt {
+        prompt_id: prompt_id.clone(),
+        prompt_blocks,
+        prompt_mode: crate::session::plan_mode::PromptMode::Agent,
+        artifact_upload_ctx: None,
+        client_identifier: Some(format!("channel:{server}")),
+        screen_mode: None,
+        verbatim: true,
+        traceparent: xai_file_utils::trace_context::current_traceparent(),
+        json_schema: None,
+        send_now: false,
+        respond_to,
+        persist_ack: None,
+        parsed_prompt_tx: None,
+    }) {
+        Ok(()) => {
+            tracing::info!(%server, %prompt_id, "injected channel message as session prompt");
+        }
+        Err(_) => {
+            tracing::warn!(%server, "failed to inject channel prompt; session actor gone");
+        }
     }
 }
 
@@ -709,6 +804,9 @@ pub async fn run_dispatcher(
     shutdown: SharedShutdownState,
     restart_actions: Option<Rc<dyn crate::session::mcp_restart::RestartActions>>,
     cwd: std::path::PathBuf,
+    // When set, channel-protocol custom notifications
+    // (`notifications/claude/channel`) are injected as session prompts.
+    session_cmd_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::session::SessionCommand>>,
 ) {
     // Cancellation source for spawned `auto_restart_stdio` tasks. The
     // dispatcher exiting (channel closed) means the session is shutting
@@ -824,7 +922,13 @@ pub async fn run_dispatcher(
                 }
             }
         }
-        flush_window(&session_id, buf, &shutdown, &gateway);
+        flush_window(
+            &session_id,
+            buf,
+            &shutdown,
+            &gateway,
+            session_cmd_tx.as_ref(),
+        );
         if let Some(actions) = restart_actions.as_ref() {
             for (server, kind) in restart_keys {
                 let _ = crate::session::mcp_restart::maybe_schedule_restart(
@@ -1598,6 +1702,7 @@ mod tests {
                     shutdown,
                     Some(restart_actions),
                     std::path::PathBuf::from("."),
+                    None,
                 ));
 
                 // Send the event the C1 bug suppressed.
@@ -1682,6 +1787,7 @@ mod tests {
                     Arc::clone(&shutdown),
                     Some(restart_actions),
                     std::path::PathBuf::from("."),
+                    None,
                 ));
 
                 tx.send(McpClientEvent::TransportClosed {
@@ -1744,7 +1850,7 @@ mod tests {
                 client_id: 1,
             },
         );
-        flush_window("s", buf, &shutdown, &gateway);
+        flush_window("s", buf, &shutdown, &gateway, None);
         assert!(
             !shutdown.lock().unwrap().is_shutting_down("crashed"),
             "TransportClosed alone must not mark shutting_down (C1 fix)",
@@ -1758,7 +1864,7 @@ mod tests {
                 server: "removed".to_string(),
             },
         );
-        flush_window("s", buf, &shutdown, &gateway);
+        flush_window("s", buf, &shutdown, &gateway, None);
         assert!(
             shutdown.lock().unwrap().is_shutting_down("removed"),
             "ConfigRemoved must mark shutting_down (kill_on_drop guard rail)",
@@ -1772,7 +1878,7 @@ mod tests {
                 server: "removed".to_string(),
             },
         );
-        flush_window("s", buf, &shutdown, &gateway);
+        flush_window("s", buf, &shutdown, &gateway, None);
         assert!(
             !shutdown.lock().unwrap().is_shutting_down("removed"),
             "Ready must clear shutting_down",

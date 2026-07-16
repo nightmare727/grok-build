@@ -1592,12 +1592,14 @@ pub(crate) async fn spawn_session_actor(
             xai_grok_telemetry::session_ctx::log_event_dual(telemetry_enabled, ev);
         });
     }
+    let cmd_tx_for_session = cmd_tx.clone();
     tokio::task::spawn_local(async move {
         xai_grok_telemetry::session_ctx::with_session_ctx(
             telemetry_ctx,
             run_session(
                 session,
                 cmd_rx,
+                cmd_tx_for_session,
                 chat_state_event_rx,
                 event_rx,
                 fs_notify_config,
