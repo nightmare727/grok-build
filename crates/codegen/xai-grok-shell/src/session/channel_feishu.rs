@@ -169,7 +169,7 @@ pub fn try_build_feishu_mcp_server(feishu: &FeishuChannelConfig) -> Result<acp::
     if !feishu_account_configured(&state_dir) {
         return Err(format!(
             "Feishu channel enabled but no account configured at {}. \
-             Run `grok feishu setup` first.",
+             Run `grok-local feishu setup` first.",
             state_dir.display()
         ));
     }
@@ -237,7 +237,7 @@ pub fn inject_feishu_channel_server(servers: &mut Vec<acp::McpServer>, config: &
                 "Feishu channel is enabled but could not be started"
             );
             // Also surface to stderr so interactive users see it without log config.
-            eprintln!("grok: feishu channel: {e}");
+            eprintln!("grok-local: feishu channel: {e}");
         }
     }
 }

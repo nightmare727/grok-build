@@ -74,6 +74,12 @@ cd channels/feishu
 npm install
 
 # Interactive app credentials → ~/.grok/channels/feishu/account.json
+# Preferred (local host binary, distinct from official `grok`):
+#   grok-local feishu setup
+#   grok-local feishu access pair <code>
+#   grok-local --channels feishu
+#
+# Or call the Node CLI directly:
 node bin/cli.mjs setup
 # node bin/cli.mjs setup clear
 

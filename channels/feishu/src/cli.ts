@@ -16,8 +16,8 @@ function printUsage(): void {
       '  node bin/cli.mjs <command>',
       '  node bin/serve.mjs',
       '',
-      'Session enablement (host):',
-      '  grok --channels feishu',
+      'Session enablement (host; local build, not official grok):',
+      '  grok-local --channels feishu',
       '',
       'State dir: $FEISHU_STATE_DIR or ~/.grok/channels/feishu',
     ].join('\n') + '\n',
@@ -42,7 +42,7 @@ async function runSetup(clear = false): Promise<void> {
         'Run `node bin/cli.mjs setup clear` to remove configuration.',
         'Start the channel with:',
         '  node bin/serve.mjs',
-        '  # or from host: grok --channels feishu',
+        '  # or from host: grok-local --channels feishu',
       ].join('\n') + '\n',
     )
     return
@@ -93,7 +93,7 @@ async function runSetup(clear = false): Promise<void> {
       '3. Add bot to a group or start a direct conversation',
       '4. Start the MCP server:',
       '   node bin/serve.mjs',
-      '   # or from host once wired: grok --channels feishu',
+      '   # or from host: grok-local --channels feishu',
     ].join('\n') + '\n',
   )
 }

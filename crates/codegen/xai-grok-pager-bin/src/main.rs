@@ -1402,7 +1402,7 @@ fn resolve_feishu_state_dir() -> std::path::PathBuf {
     expand_feishu_state_dir(&raw)
 }
 
-/// Dispatch `grok feishu …` to the vendored Node CLI (`channels/feishu/bin/cli.mjs`).
+/// Dispatch `grok-local feishu …` to the vendored Node CLI (`channels/feishu/bin/cli.mjs`).
 fn run_feishu_command(args: FeishuArgs) -> Result<()> {
     ensure_node_available()?;
     let cli = resolve_feishu_cli_mjs()?;

@@ -15,7 +15,7 @@
 2. **Outbound reply:** Agent can reply via MCP tool `reply` (chat_id + text); users see results in Feishu.
 3. **Loading / stream:** Immediate loading card on inbound; host streams assistant text via `assistant_delta`; final resolves the same card.
 4. **Permission relay:** Tool permission prompts race local TUI vs Feishu structured yes/no + short code.
-5. **Auth:** CCB-style **pairing** — unpaired senders get a code only; no session inject until `grok feishu access pair <code>`.
+5. **Auth:** CCB-style **pairing** — unpaired senders get a code only; no session inject until `grok-local feishu access pair <code>`.
 6. **Enablement:** Config defaults + CLI override (session opt-in / force-off).
 7. **Implementation strategy:** Reuse CCB Feishu as **Node stdio MCP** (vendored); Grok implements **Channel Host** in Rust.
 
@@ -114,7 +114,7 @@ System / tool guidance: reply using `reply` with `chat_id` from the channel tag;
 | Channel gate | Same | Register inbound handlers only if capability present **and** session allowlist matches |
 | Channel runtime | `xai-grok-shell` session layer | Subscribe MCP notifications → prompt queue; track `channel_context`; emit assistant_delta |
 | Permission relay | Alongside existing permission path | Fan-out permission_request; resolve structured channel permission vs local UI |
-| Feishu CLI surface | `xai-grok-pager-bin` / shell CLI | `grok feishu setup|setup clear|access pair|serve` |
+| Feishu CLI surface | `xai-grok-pager-bin` / shell CLI | `grok-local feishu setup|setup clear|access pair|serve` |
 | Feishu MCP process | Vendored Node package `channels/feishu/` | Long connection, pairing, cards, permission parse, `reply` tool |
 
 ### Explicit non-responsibilities
@@ -151,19 +151,19 @@ enabled = ["feishu"]
 
 | Invocation | Behavior |
 |------------|----------|
-| `grok --channels feishu` | Enable feishu for this session (may be multi-valued later) |
-| `grok --no-channels` or `grok --channels none` | Force off for this session |
-| `grok feishu setup` | Interactive App ID / App Secret → state dir |
-| `grok feishu setup clear` | Remove credentials |
-| `grok feishu access pair <code>` | Confirm pairing |
-| `grok feishu serve` | Standalone MCP for debugging |
+| `grok-local --channels feishu` | Enable feishu for this session (may be multi-valued later) |
+| `grok-local --no-channels` or `grok-local --channels none` | Force off for this session |
+| `grok-local feishu setup` | Interactive App ID / App Secret → state dir |
+| `grok-local feishu setup clear` | Remove credentials |
+| `grok-local feishu access pair <code>` | Confirm pairing |
+| `grok-local feishu serve` | Standalone MCP for debugging |
 
 ### Startup behavior
 
 When effective channels include `feishu`:
 
 1. Verify Node is available; if not, fail with install instructions.
-2. Verify account configured (`setup` done); if not, fail with `grok feishu setup` hint.
+2. Verify account configured (`setup` done); if not, fail with `grok-local feishu setup` hint.
 3. Spawn Feishu MCP stdio process and connect via existing MCP pool.
 4. Run channel gate on capabilities; if skip, surface reason (not silent).
 5. Optional UX: status / `/status` shows `channels: feishu` connected or error.
@@ -175,7 +175,7 @@ When effective channels include `feishu`:
 Align with CCB Feishu package:
 
 - Unpaired inbound: bot replies with pairing code; **no** `notifications/claude/channel` inject to Grok.
-- Operator runs `grok feishu access pair <code>` (wrapper over Feishu package pairing confirm).
+- Operator runs `grok-local feishu access pair <code>` (wrapper over Feishu package pairing confirm).
 - Paired users’ messages inject and may drive agent turns.
 - Pairing store lives in Feishu state dir (same as CCB `AccessConfig` pattern).
 
@@ -230,7 +230,7 @@ Throttling: coalesce intermediate patches; final always delivered.
 
 | Slice | Deliverable | Acceptance |
 |-------|-------------|------------|
-| **P0** | Vendored Feishu MCP + `grok feishu setup/pair/serve` | Standalone serve connects; pairing works |
+| **P0** | Vendored Feishu MCP + `grok-local feishu setup/pair/serve` | Standalone serve connects; pairing works |
 | **P1** | Config + CLI channels + spawn + gate | `--channels feishu` connects; capability gated |
 | **P2** | Inbound → prompt inject + `reply` | Message in Feishu → agent turn → reply visible |
 | **P3** | assistant_delta ↔ loading card | Thinking card updates; final text lands |
@@ -270,7 +270,7 @@ Throttling: coalesce intermediate patches; final always delivered.
 
 v1 is done when:
 
-1. Operator can setup + pair + start `grok --channels feishu` (or config-enabled) with Node present.
+1. Operator can setup + pair + start `grok-local --channels feishu` (or config-enabled) with Node present.
 2. A paired Feishu user can message the bot and get a correct agent-driven reply in Feishu.
 3. Loading card appears and updates to final answer.
 4. A tool permission can be approved or denied from Feishu with yes/no + code, racing local UI.

@@ -114,7 +114,7 @@ export function startLongConnection(params: {
             appId,
             appSecret,
             chatId,
-            text: `Your pairing code is: ${code}\n\nAsk the operator to confirm:\nnode bin/cli.mjs access pair ${code}`,
+            text: `Your pairing code is: ${code}\n\nAsk the operator to confirm:\ngrok-local feishu access pair ${code}`,
           })
         } catch (err) {
           process.stderr.write(`[feishu] Failed to send pairing code: ${err}\n`)
