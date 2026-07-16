@@ -1,0 +1,27 @@
+{
+  "name": "@xai/grok-feishu-channel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Feishu (Lark) channel MCP for Grok Build — vendored from CCB packages/feishu",
+  "bin": {
+    "grok-feishu-mcp": "./bin/serve.mjs",
+    "grok-feishu-cli": "./bin/cli.mjs"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "serve": "node ./bin/serve.mjs",
+    "cli": "node ./bin/cli.mjs"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.68.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "tsx": "^4.19.0",
+    "zod": "^3.25.0"
+  }
+}
