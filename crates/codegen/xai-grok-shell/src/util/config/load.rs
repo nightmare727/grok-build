@@ -105,6 +105,7 @@ pub fn load_config_from_toml(root: &TomlValue) -> Config {
             .and_then(|t| t.get("ask_user_question"))
             .and_then(|v| v.clone().try_into().ok())
             .unwrap_or_default(),
+        channels: section(table, "channels"),
     }
 }
 /// Resolve permission config with project override semantics.

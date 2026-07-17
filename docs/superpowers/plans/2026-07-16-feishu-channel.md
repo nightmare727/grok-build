@@ -326,10 +326,10 @@ no_channels: bool,
 - [ ] **Step 5.2:** Add subcommand:
 
 ```text
-grok feishu setup
-grok feishu setup clear
-grok feishu access pair <code>
-grok feishu serve
+grok-local feishu setup
+grok-local feishu setup clear
+grok-local feishu access pair <code>
+grok-local feishu serve
 ```
 
 Implementation: spawn Node CLI with `FEISHU_STATE_DIR` set from config/default `~/.grok/channels/feishu`. Resolve vendored path relative to executable or `CARGO_MANIFEST_DIR` / install layout — document both dev and release.
@@ -366,7 +366,7 @@ McpServerTransportConfig::Stdio {
 Preflight:
 
 1. `which node` / `Command::new("node").arg("-v")` — error string if missing.
-2. Account file exists under state dir — error with `grok feishu setup`.
+2. Account file exists under state dir — error with `grok-local feishu setup`.
 
 - [ ] **Step 6.2:** After handshake Ready, read server capabilities (`experimental` map). Call `gate_channel_server`. If Register, mark server as channel-active for this session.
 
@@ -499,7 +499,7 @@ git commit -m "feat(channels): Feishu permission relay with claim race"
 - README pointer if appropriate
 - Error strings for preflight
 
-- [ ] **Step 10.1:** User guide: setup Feishu app, long connection, subscribe `im.message.receive_v1`, `grok feishu setup`, pair, `grok --channels feishu` or config, troubleshooting (Node missing, unpaired, not gated).
+- [ ] **Step 10.1:** User guide: setup Feishu app, long connection, subscribe `im.message.receive_v1`, `grok-local feishu setup`, pair, `grok-local --channels feishu` or config, troubleshooting (Node missing, unpaired, not gated).
 
 - [ ] **Step 10.2:** Ensure failed channel start shows in TUI/status (not silent).
 
@@ -515,13 +515,13 @@ git commit -m "docs: Feishu channel user guide and error UX"
 
 Manual (real Feishu; operator-owned):
 
-- [ ] `grok feishu setup` saves account under `~/.grok/channels/feishu`
+- [ ] `grok-local feishu setup` saves account under `~/.grok/channels/feishu`
 - [ ] Unpaired user gets pairing code only
-- [ ] `grok feishu access pair <code>` then message injects
+- [ ] `grok-local feishu access pair <code>` then message injects
 - [ ] Agent `reply` appears in Feishu
 - [ ] Loading card updates during turn
 - [ ] Tool permission: `yes <id>` / `no <id>` works; local UI still works
-- [ ] `grok --no-channels` does not spawn Feishu
+- [ ] `grok-local --no-channels` does not spawn Feishu
 - [ ] Config `enabled = ["feishu"]` works without CLI flag
 
 Automated regression to keep green:

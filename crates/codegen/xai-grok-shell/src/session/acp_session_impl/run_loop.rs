@@ -33,6 +33,7 @@ fn cleanup_session_scratch(_session: &SessionActor) {}
 pub(super) async fn run_session(
     session: Arc<SessionActor>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
+    session_cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     mut chat_state_event_rx: mpsc::UnboundedReceiver<xai_chat_state::ChatStateEvent>,
     mut event_rx: mpsc::UnboundedReceiver<SessionEvent>,
     fs_notify_config: Option<ClientFsConfig>,
@@ -118,6 +119,7 @@ pub(super) async fn run_session(
             } else {
                 None
             };
+        let dispatcher_cmd_tx = session_cmd_tx.clone();
         tokio::task::spawn_local(async move {
             crate::session::mcp_dispatcher::run_dispatcher(
                 dispatcher_session_id,
@@ -127,6 +129,7 @@ pub(super) async fn run_session(
                 shutdown_state,
                 restart_actions,
                 dispatcher_cwd,
+                Some(dispatcher_cmd_tx),
             )
             .await;
         });

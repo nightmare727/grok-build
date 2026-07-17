@@ -318,6 +318,7 @@ pub(crate) mod image_describe;
 pub(crate) mod image_normalize;
 pub mod inference_metrics;
 pub use xai_grok_shared::session::info;
+pub mod channel_feishu;
 pub mod managed_mcp;
 pub(crate) mod mcp_descriptors;
 pub mod mcp_dispatcher;
